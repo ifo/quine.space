@@ -2,70 +2,165 @@ package main
 
 import (
 	"crypto/tls"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
+
+	"golang.org/x/crypto/acme/autocert"
 )
 
 func main() {
+	httpPort := os.Getenv("HTTP_PORT")
+	httpsPort := os.Getenv("HTTPS_PORT")
+	secretDir := os.Getenv("SECRET_DIR")
+	autocertWhitelist := os.Getenv("HOST_WHITELIST")
+	if autocertWhitelist == "" {
+		autocertWhitelist = "quine.space"
+	}
+
+	// Setup and handle autocert - a.k.a. Let's Encrypt
+	m := &autocert.Manager{
+		Cache:      autocert.DirCache(secretDir),
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(autocertWhitelist),
+	}
+
+	// Redirect to https
+	httpRedirectHandler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Connection", "close")
+		url := "https://" + req.Host + req.URL.String()
+		http.Redirect(w, req, url, http.StatusTemporaryRedirect)
+	})
+
+	// Run the http autocert server with https redirect fallback
+	go http.ListenAndServe(":"+httpPort, m.HTTPHandler(httpRedirectHandler))
+
+	// TLS Config based on https://blog.gopheracademy.com/advent-2016/exposing-go-on-the-internet/
 	tlsConfig := &tls.Config{
-		// Causes servers to use Go's default ciphersuite preferences,
-		// which are tuned to avoid attacks. Does nothing on clients.
-		PreferServerCipherSuites: true,
-		// Only use curves which have assembly implementations
-		CurvePreferences: []tls.CurveID{
-			tls.CurveP256,
-			tls.X25519, // Go 1.8 only
-		},
-		MinVersion: tls.VersionTLS12,
 		CipherSuites: []uint16{
 			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305, // Go 1.8 only
-			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,   // Go 1.8 only
+			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
 			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-
-			// Best disabled, as they don't provide Forward Secrecy,
-			// but might be necessary for some clients
-			// tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
-			// tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
 		},
+		CurvePreferences: []tls.CurveID{
+			tls.CurveP256,
+			tls.X25519,
+		},
+		// GetCertificate provided by the autocert manager
+		GetCertificate:           m.GetCertificate,
+		PreferServerCipherSuites: true,
+		MinVersion:               tls.VersionTLS12,
 	}
 
-	httpSrv := &http.Server{
-		Addr:         ":3000",
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			w.Header().Set("Connection", "close")
-			url := "https://" + remove3000(req.Host) + ":4430" + req.URL.String()
-			http.Redirect(w, req, url, http.StatusTemporaryRedirect)
-		}),
-	}
-	go func() { log.Fatal(httpSrv.ListenAndServe()) }()
-
-	serveMux := http.NewServeMux()
-	serveMux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("This is an example server.\n"))
-	})
-
+	// Setup the TLS server
 	srv := &http.Server{
-		Addr:         ":4430",
+		Addr:         ":" + httpsPort,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
 		TLSConfig:    tlsConfig,
-		Handler:      serveMux,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprintf(w, quine, backtick+quine+backtick, backtick)
+		}),
 	}
-	//log.Println(srv.ListenAndServeTLS("", ""))
-	log.Println(srv.ListenAndServeTLS("server.crt", "server.key"))
+
+	log.Println(srv.ListenAndServeTLS("", ""))
 }
 
-func remove3000(s string) string {
-	if s[len(s)-5:] == ":3000" {
-		return s[:len(s)-5]
+//
+// Everything below this is purely for the quine
+//
+
+var (
+	quine = `package main
+
+import (
+	"crypto/tls"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"time"
+
+	"golang.org/x/crypto/acme/autocert"
+)
+
+func main() {
+	httpPort := os.Getenv("HTTP_PORT")
+	httpsPort := os.Getenv("HTTPS_PORT")
+	secretDir := os.Getenv("SECRET_DIR")
+	autocertWhitelist := os.Getenv("HOST_WHITELIST")
+	if autocertWhitelist == "" {
+		autocertWhitelist = "quine.space"
 	}
-	return s
+
+	// Setup and handle autocert - a.k.a. Let's Encrypt
+	m := &autocert.Manager{
+		Cache:      autocert.DirCache(secretDir),
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(autocertWhitelist),
+	}
+
+	// Redirect to https
+	httpRedirectHandler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Connection", "close")
+		url := "https://" + req.Host + req.URL.String()
+		http.Redirect(w, req, url, http.StatusTemporaryRedirect)
+	})
+
+	// Run the http autocert server with https redirect fallback
+	go http.ListenAndServe(":"+httpPort, m.HTTPHandler(httpRedirectHandler))
+
+	// TLS Config based on https://blog.gopheracademy.com/advent-2016/exposing-go-on-the-internet/
+	tlsConfig := &tls.Config{
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		},
+		CurvePreferences: []tls.CurveID{
+			tls.CurveP256,
+			tls.X25519,
+		},
+		// GetCertificate provided by the autocert manager
+		GetCertificate:           m.GetCertificate,
+		PreferServerCipherSuites: true,
+		MinVersion:               tls.VersionTLS12,
+	}
+
+	// Setup the TLS server
+	srv := &http.Server{
+		Addr:         ":" + httpsPort,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
+		TLSConfig:    tlsConfig,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprintf(w, quine, backtick+quine+backtick, backtick)
+		}),
+	}
+
+	log.Println(srv.ListenAndServeTLS("", ""))
 }
+
+//
+// Everything below this is purely for the quine
+//
+
+var (
+	quine = %s
+	backtick = %q
+)
+`
+	backtick = "`"
+)
